@@ -24,7 +24,7 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # It will be automatically synced via the npm "version" script
 # that is run when running `npm version` during the release
 # process. See `Releasing` section in README.md.
-VERSION = "0.17.0"
+VERSION = "0.21.0"
 
 def rules_typescript_dependencies():
     """
@@ -38,18 +38,17 @@ def rules_typescript_dependencies():
     _maybe(
         http_archive,
         name = "build_bazel_rules_nodejs",
-        urls = ["https://github.com/bazelbuild/rules_nodejs/archive/0.13.4.zip"],
-        strip_prefix = "rules_nodejs-0.13.4",
-        sha256 = "a612bfd80b980bf7aa1ef9b24ef3c86a7e82bcd3f8aa92c5ef492472657cc7c8",
+        urls = ["https://github.com/bazelbuild/rules_nodejs/archive/0.16.1.zip"],
+        strip_prefix = "rules_nodejs-0.16.1",
     )
 
     # ts_web_test depends on the web testing rules to provision browsers.
     _maybe(
         http_archive,
         name = "io_bazel_rules_webtesting",
-        urls = ["https://github.com/bazelbuild/rules_webtesting/archive/0.2.1.zip"],
-        strip_prefix = "rules_webtesting-0.2.1",
-        sha256 = "7d490aadff9b5262e5251fa69427ab2ffd1548422467cb9f9e1d110e2c36f0fa",
+        urls = ["https://github.com/bazelbuild/rules_webtesting/archive/111d792b9a5b17f87b6e177e274dbbee46094791.zip"],
+        strip_prefix = "rules_webtesting-111d792b9a5b17f87b6e177e274dbbee46094791",
+        sha256 = "a13af63e928c34eff428d47d31bafeec4e38ee9b6940e70bf2c9cd47184c5c16",
     )
 
     # ts_devserver depends on the Go rules.
@@ -57,16 +56,26 @@ def rules_typescript_dependencies():
     _maybe(
         http_archive,
         name = "io_bazel_rules_go",
-        urls = ["https://github.com/bazelbuild/rules_go/releases/download/0.13.0/rules_go-0.13.0.tar.gz"],
-        sha256 = "ba79c532ac400cefd1859cbc8a9829346aa69e3b99482cd5a54432092cbc3933",
+        url = "https://github.com/bazelbuild/rules_go/releases/download/0.16.0/rules_go-0.16.0.tar.gz",
+        sha256 = "ee5fe78fe417c685ecb77a0a725dc9f6040ae5beb44a0ba4ddb55453aad23a8a",
     )
 
     # go_repository is defined in bazel_gazelle
     _maybe(
         http_archive,
         name = "bazel_gazelle",
-        urls = ["https://github.com/bazelbuild/bazel-gazelle/releases/download/0.13.0/bazel-gazelle-0.13.0.tar.gz"],
-        sha256 = "bc653d3e058964a5a26dcad02b6c72d7d63e6bb88d94704990b908a1445b8758",
+        urls = ["https://github.com/bazelbuild/bazel-gazelle/archive/109bcfd6880aac2517a1a2d48987226da6337e11.zip"],
+        strip_prefix = "bazel-gazelle-109bcfd6880aac2517a1a2d48987226da6337e11",
+        sha256 = "8f80ce0f7a6f8a3fee1fb863c9a23e1de99d678c1cf3c6f0a128f3b883168208",
+    )
+
+    # ts_auto_deps depends on com_github_bazelbuild_buildtools
+    _maybe(
+        http_archive,
+        name = "com_github_bazelbuild_buildtools",
+        url = "https://github.com/bazelbuild/buildtools/archive/0.12.0.zip",
+        strip_prefix = "buildtools-0.12.0",
+        sha256 = "ec495cbd19238c9dc488fd65ca1fee56dcb1a8d6d56ee69a49f2ebe69826c261",
     )
 
     ###############################################
@@ -77,9 +86,9 @@ def rules_typescript_dependencies():
     _maybe(
         http_archive,
         name = "bazel_skylib",
-        url = "https://github.com/bazelbuild/bazel-skylib/archive/0.3.1.zip",
-        strip_prefix = "bazel-skylib-0.3.1",
-        sha256 = "95518adafc9a2b656667bbf517a952e54ce7f350779d0dd95133db4eb5c27fb1",
+        url = "https://github.com/bazelbuild/bazel-skylib/archive/0.5.0.zip",
+        strip_prefix = "bazel-skylib-0.5.0",
+        sha256 = "ca4e3b8e4da9266c3a9101c8f4704fe2e20eb5625b2a6a7d2d7d45e3dd4efffd",
     )
 
 def rules_typescript_dev_dependencies():
@@ -89,17 +98,12 @@ def rules_typescript_dev_dependencies():
     These are in this file to keep version information in one place, and make the WORKSPACE
     shorter.
     """
-    http_archive(
-        name = "io_bazel",
-        urls = ["https://github.com/bazelbuild/bazel/releases/download/0.9.0/bazel-0.9.0-dist.zip"],
-        sha256 = "efb28fed4ffcfaee653e0657f6500fc4cbac61e32104f4208da385676e76312a",
-    )
 
-    http_archive(
-        name = "com_github_bazelbuild_buildtools",
-        url = "https://github.com/bazelbuild/buildtools/archive/0.12.0.zip",
-        strip_prefix = "buildtools-0.12.0",
-        sha256 = "ec495cbd19238c9dc488fd65ca1fee56dcb1a8d6d56ee69a49f2ebe69826c261",
+    # For running skylint
+    _maybe(
+        http_archive,
+        name = "io_bazel",
+        urls = ["https://github.com/bazelbuild/bazel/releases/download/0.17.1/bazel-0.17.1-dist.zip"],
     )
 
     #############################################
@@ -108,16 +112,16 @@ def rules_typescript_dev_dependencies():
 
     http_archive(
         name = "io_bazel_rules_sass",
-        urls = ["https://github.com/bazelbuild/rules_sass/archive/0.0.3.zip"],
-        strip_prefix = "rules_sass-0.0.3",
-        sha256 = "8fa98e7b48a5837c286a1ea254b5a5c592fced819ee9fe4fdd759768d97be868",
+        urls = ["https://github.com/bazelbuild/rules_sass/archive/1.13.4.zip"],
+        strip_prefix = "rules_sass-1.13.4",
+        sha256 = "5ddde0d3df96978fa537f76e766538c031dee4d29f91a895f4b1345b5e3f9b16",
     )
 
     http_archive(
         name = "io_bazel_skydoc",
-        urls = ["https://github.com/bazelbuild/skydoc/archive/0ef7695c9d70084946a3e99b89ad5a99ede79580.zip"],
-        strip_prefix = "skydoc-0ef7695c9d70084946a3e99b89ad5a99ede79580",
-        sha256 = "491f9e142b870b18a0ec8eb3d66636eeceabe5f0c73025706c86f91a1a2acb4d",
+        url = "https://github.com/bazelbuild/skydoc/archive/77e5399258f6d91417d23634fce97d73b40cf337.zip",
+        strip_prefix = "skydoc-77e5399258f6d91417d23634fce97d73b40cf337",
+        sha256 = "4e9bd9ef65af54dedd997b408fa26c2e70c30ee8e078bcc1b51a33cf7d7f9d7e",
     )
 
 def _maybe(repo_rule, name, **kwargs):

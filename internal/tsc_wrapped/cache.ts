@@ -19,12 +19,116 @@ import * as fs from 'fs';
 import * as ts from 'typescript';
 import * as perfTrace from './perf_trace';
 
+type Debug = (...msg: Array<{}>) => void;
+
+interface CacheStats {
+  reads: number;
+  hits: number;
+  evictions: number;
+}
+
 /**
- * An entry in FileCache consists of blaze's digest of the file and the parsed
- * ts.SourceFile AST.
+ * Cache exposes a trivial LRU cache.
+ *
+ * This code uses the fact that JavaScript hash maps are linked lists - after
+ * reaching the cache size limit, it deletes the oldest (first) entries. Used
+ * cache entries are moved to the end of the list by deleting and re-inserting.
  */
-export interface CacheEntry {
-  digest: string;
+class Cache<T> {
+  private map = new Map<string, T>();
+  private stats: CacheStats = {reads: 0, hits: 0, evictions: 0};
+
+  constructor(private name: string, private debug: Debug) {}
+
+  set(key: string, value: T) {
+    this.map.set(key, value);
+  }
+
+  get(key: string, updateCache = true): T|undefined {
+    this.stats.reads++;
+
+    const entry = this.map.get(key);
+    if (updateCache) {
+      if (entry) {
+        this.debug(this.name, 'cache hit:', key);
+        this.stats.hits++;
+        // Move an entry to the end of the cache by deleting and re-inserting
+        // it.
+        this.map.delete(key);
+        this.map.set(key, entry);
+      } else {
+        this.debug(this.name, 'cache miss:', key);
+      }
+      this.traceStats();
+    }
+    return entry;
+  }
+
+  delete(key: string) {
+    this.map.delete(key);
+  }
+
+  evict(unevictableKeys?: {has: (key: string) => boolean}): number {
+    // Drop half the cache, the least recently used entry == the first entry.
+    this.debug('Evicting from the', this.name, 'cache...');
+    const originalSize = this.map.size;
+    let numberKeysToDrop = originalSize / 2;
+    if (numberKeysToDrop === 0) {
+      return 0;
+    }
+    // Map keys are iterated in insertion order, since we reinsert on access
+    // this is indeed a LRU strategy.
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/keys
+    for (const key of this.map.keys()) {
+      if (numberKeysToDrop === 0) break;
+      if (unevictableKeys && unevictableKeys.has(key)) continue;
+      this.map.delete(key);
+      numberKeysToDrop--;
+    }
+    const keysDropped = originalSize - this.map.size;
+    this.stats.evictions += keysDropped;
+    this.debug('Evicted', keysDropped, this.name, 'cache entries');
+    this.traceStats();
+    return keysDropped;
+  }
+
+  keys() {
+    return this.map.keys();
+  }
+
+  resetStats() {
+    this.stats = {hits: 0, reads: 0, evictions: 0};
+  }
+
+  printStats() {
+    let percentage;
+    if (this.stats.reads === 0) {
+      percentage = 100.00;  // avoid "NaN %"
+    } else {
+      percentage = (this.stats.hits / this.stats.reads * 100).toFixed(2);
+    }
+    this.debug(`${this.name} cache stats: ${percentage}% hits`, this.stats);
+  }
+
+  traceStats() {
+    // counters are rendered as stacked bar charts, so record cache
+    // hits/misses rather than the 'reads' stat tracked in stats
+    // so the chart makes sense.
+    perfTrace.counter(`${this.name} cache hit rate`, {
+      'hits': this.stats.hits,
+      'misses': this.stats.reads - this.stats.hits,
+    });
+    perfTrace.counter(`${this.name} cache evictions`, {
+      'evictions': this.stats.evictions,
+    });
+    perfTrace.counter(`${this.name} cache size`, {
+      [`${this.name}s`]: this.map.size,
+    });
+  }
+}
+
+interface SourceFileEntry {
+  digest: string;  // blaze's opaque digest of the file
   value: ts.SourceFile;
 }
 
@@ -34,17 +138,14 @@ export interface CacheEntry {
 const DEFAULT_MAX_MEM_USAGE = 1024 * (1 << 20 /* 1 MB */);
 
 /**
- * FileCache is a trivial LRU cache for bazel outputs.
+ * FileCache is a trivial LRU cache for typescript-parsed bazel-output files.
  *
- * Cache entries are keyed off by an opaque, bazel-supplied digest.
- *
- * This code uses the fact that JavaScript hash maps are linked lists - after
- * reaching the cache size limit, it deletes the oldest (first) entries. Used
- * cache entries are moved to the end of the list by deleting and re-inserting.
+ * Cache entries include an opaque bazel-supplied digest to track staleness.
+ * Expected digests must be set (using updateCache) before using the cache.
  */
 // TODO(martinprobst): Drop the <T> parameter, it's no longer used.
 export class FileCache<T = {}> {
-  private fileCache = new Map<string, CacheEntry>();
+  private fileCache = new Cache<SourceFileEntry>('file', this.debug);
   /**
    * FileCache does not know how to construct bazel's opaque digests. This
    * field caches the last (or current) compile run's digests, so that code
@@ -58,25 +159,19 @@ export class FileCache<T = {}> {
    */
   private cannotEvict = false;
 
-  cacheStats = {
-    hits: 0,
-    reads: 0,
-    evictions: 0,
-  };
-
   /**
    * Because we cannot measuse the cache memory footprint directly, we evict
    * when the process' total memory usage goes beyond this number.
    */
   private maxMemoryUsage = DEFAULT_MAX_MEM_USAGE;
 
-  constructor(private debug: (...msg: Array<{}>) => void) {}
+  constructor(protected debug: (...msg: Array<{}>) => void) {}
 
   setMaxCacheSize(maxCacheSize: number) {
     if (maxCacheSize < 0) {
       throw new Error(`FileCache max size is negative: ${maxCacheSize}`);
     }
-    this.debug('FileCache max size is', maxCacheSize >> 20, 'MB');
+    this.debug('Cache max size is', maxCacheSize >> 20, 'MB');
     this.maxMemoryUsage = maxCacheSize;
     this.maybeFreeMemory();
   }
@@ -104,7 +199,7 @@ export class FileCache<T = {}> {
     this.lastDigests = digests;
     this.cannotEvict = false;
     for (const [filePath, newDigest] of digests.entries()) {
-      const entry = this.fileCache.get(filePath);
+      const entry = this.fileCache.get(filePath, /*updateCache=*/ false);
       if (entry && entry.digest !== newDigest) {
         this.debug(
             'dropping file cache entry for', filePath, 'digests', entry.digest,
@@ -125,29 +220,15 @@ export class FileCache<T = {}> {
   }
 
   getCache(filePath: string): ts.SourceFile|undefined {
-    this.cacheStats.reads++;
-
     const entry = this.fileCache.get(filePath);
-    let value: ts.SourceFile|undefined;
-    if (!entry) {
-      this.debug('Cache miss:', filePath);
-    } else {
-      this.debug('Cache hit:', filePath);
-      this.cacheStats.hits++;
-      // Move a used file to the end of the cache by deleting and re-inserting
-      // it.
-      this.fileCache.delete(filePath);
-      this.fileCache.set(filePath, entry);
-      value = entry.value;
-    }
-    this.traceStats();
-    return value;
+    if (entry) return entry.value;
+    return undefined;
   }
 
-  putCache(filePath: string, entry: CacheEntry): void {
+  putCache(filePath: string, entry: SourceFileEntry): void {
     const dropped = this.maybeFreeMemory();
     this.fileCache.set(filePath, entry);
-    this.debug('Loaded', filePath, 'dropped', dropped, 'cache entries');
+    this.debug('Loaded file:', filePath, 'dropped', dropped, 'files');
   }
 
   /**
@@ -163,38 +244,15 @@ export class FileCache<T = {}> {
   }
 
   resetStats() {
-    this.cacheStats = {
-      hits: 0,
-      reads: 0,
-      evictions: 0,
-    };
+    this.fileCache.resetStats();
   }
 
   printStats() {
-    let percentage;
-    if (this.cacheStats.reads === 0) {
-      percentage = 100.00;  // avoid "NaN %"
-    } else {
-      percentage =
-          (this.cacheStats.hits / this.cacheStats.reads * 100).toFixed(2);
-    }
-    this.debug('Cache stats:', percentage, '% hits', this.cacheStats);
+    this.fileCache.printStats();
   }
 
   traceStats() {
-    // counters are rendered as stacked bar charts, so record cache
-    // hits/misses rather than the 'reads' stat tracked in cacheSats
-    // so the chart makes sense.
-    perfTrace.counter('file cache hit rate', {
-      'hits': this.cacheStats.hits,
-      'misses': this.cacheStats.reads - this.cacheStats.hits,
-    });
-    perfTrace.counter('file cache evictions', {
-      'evictions': this.cacheStats.evictions,
-    });
-    perfTrace.counter('file cache size', {
-      'files': this.fileCache.size,
-    });
+    this.fileCache.traceStats();
   }
 
   /**
@@ -213,30 +271,8 @@ export class FileCache<T = {}> {
     if (!this.shouldFreeMemory() || this.cannotEvict) {
       return 0;
     }
-    // Drop half the cache, the least recently used entry == the first entry.
-    this.debug('Evicting from the cache...');
-    const originalSize = this.fileCache.size;
-    let numberKeysToDrop = originalSize / 2;
-    if (numberKeysToDrop === 0) {
-      this.debug('Out of memory with an empty cache.');
-      return 0;
-    }
-    // Map keys are iterated in insertion order, since we reinsert on access
-    // this is indeed a LRU strategy.
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/keys
-    for (const key of this.fileCache.keys()) {
-      if (numberKeysToDrop === 0) break;
-      // Do not attempt to drop files that are part of the current compilation
-      // unit. They are hard-retained by TypeScript compiler anyway, so they
-      // cannot be freed in either case.
-      if (this.lastDigests.has(key)) continue;
-      this.fileCache.delete(key);
-      numberKeysToDrop--;
-    }
-    const keysDropped = originalSize - this.fileCache.size;
-    this.cacheStats.evictions += keysDropped;
-    this.debug('Evicted', keysDropped, 'cache entries');
-    if (keysDropped === 0) {
+    const dropped = this.fileCache.evict(this.lastDigests);
+    if (dropped === 0) {
       // Freeing memory did not drop any cache entries, because all are pinned.
       // Stop evicting until the pinned list changes again. This prevents
       // degenerating into an O(n^2) situation where each file load iterates
@@ -244,11 +280,60 @@ export class FileCache<T = {}> {
       // because all are pinned.
       this.cannotEvict = true;
     }
-    return keysDropped;
+    return dropped;
   }
 
-  getCacheKeysForTest() {
+  getFileCacheKeysForTest() {
     return Array.from(this.fileCache.keys());
+  }
+}
+
+/**
+ * ProgramAndFileCache is a trivial LRU cache for typescript-parsed programs and
+ * bazel-output files.
+ *
+ * Programs are evicted before source files because they have less reuse across
+ * compilations.
+ */
+export class ProgramAndFileCache extends FileCache {
+  private programCache = new Cache<ts.Program>('program', this.debug);
+
+  getProgram(target: string): ts.Program|undefined {
+    return this.programCache.get(target);
+  }
+
+  putProgram(target: string, program: ts.Program): void {
+    const dropped = this.maybeFreeMemory();
+    this.programCache.set(target, program);
+    this.debug('Loaded program:', target, 'dropped', dropped, 'entries');
+  }
+
+  resetStats() {
+    super.resetStats()
+    this.programCache.resetStats();
+  }
+
+  printStats() {
+    super.printStats();
+    this.programCache.printStats();
+  }
+
+  traceStats() {
+    super.traceStats();
+    this.programCache.traceStats();
+  }
+
+  maybeFreeMemory() {
+    if (!this.shouldFreeMemory()) return 0;
+
+    const dropped = this.programCache.evict();
+    if (dropped > 0) return dropped;
+
+    return super.maybeFreeMemory();
+  }
+
+  getProgramCacheKeysForTest() {
+    return Array.from(this.programCache.keys());
   }
 }
 

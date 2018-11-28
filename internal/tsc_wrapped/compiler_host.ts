@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as tsickle from 'tsickle';
 import * as ts from 'typescript';
 
-import {FileLoader} from './file_cache';
+import {FileLoader} from './cache';
 import * as perfTrace from './perf_trace';
 import {BazelOptions} from './tsconfig';
 import {DEBUG, debug} from './worker';
@@ -83,12 +83,13 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
   provideExternalModuleDtsNamespace: boolean;
   options: BazelTsOptions;
   host: ts.ModuleResolutionHost = this;
+  private allowActionInputReads = true;
+
 
   constructor(
       public inputFiles: string[], options: ts.CompilerOptions,
       readonly bazelOpts: BazelOptions, private delegate: ts.CompilerHost,
       private fileLoader: FileLoader,
-      private readonly allowActionInputReads: boolean,
       private moduleResolver: ModuleResolver = ts.resolveModuleName) {
     this.options = narrowTsOptions(options);
     this.relativeRoots =
@@ -109,8 +110,7 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     // include global typings from node_modules/@types
     // see getAutomaticTypeDirectiveNames in
     // TypeScript:src/compiler/moduleNameResolver
-    // Do this for Bazel only - under Blaze we don't support such discovery.
-    if (allowActionInputReads && delegate && delegate.directoryExists) {
+    if (this.allowActionInputReads && delegate && delegate.directoryExists) {
       this.directoryExists = delegate.directoryExists.bind(delegate);
     }
 
@@ -393,9 +393,13 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
         resolved = this.resolveTypingFromDirectory(path.posix.join(this.bazelOpts.nodeModulesPrefix, name), false);
       }
 
-      if (!resolved) {
-        console.error(`Failed to resolve type reference directive '${name}'`);
+      // Types not resolved should be silently ignored. Leave it to Typescript
+      // to either error out with "TS2688: Cannot find type definition file for
+      // 'foo'" or for the build to fail due to a missing type that is used.
+      if (DEBUG && !resolved) {
+        debug(`Failed to resolve type reference directive '${name}'`);
       }
+
       result.push(resolved);
     });
     return result;

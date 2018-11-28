@@ -1,10 +1,9 @@
 load(
-    "@build_bazel_rules_typescript//:defs.bzl",
-    "ts_library",
+    "//:defs.bzl",
     "ts_proto_library",
-    "ts_web_test_suite",
     "ts_devserver",
 )
+load("//internal:defaults.bzl", "ts_library", "ts_web_test_suite")
 
 proto_library(
     name = "tire_proto",
@@ -29,7 +28,14 @@ ts_library(
     name = "test_lib",
     testonly = True,
     srcs = ["car.spec.ts"],
-    deps = [":car"],
+    tsconfig = "//examples:tsconfig-test",
+    deps = [
+        ":car",
+        "@npm//@types/jasmine",
+        "@npm//@types/long",
+        "@npm//@types/node",
+        "@npm//long",
+    ],
 )
 
 ts_web_test_suite(
@@ -76,8 +82,8 @@ rollup_bundle(
 genrule(
     name = "protobufjs",
     srcs = [
-        "@build_bazel_rules_typescript_protobufs_compiletime_deps//:node_modules/protobufjs/dist/minimal/protobuf.min.js",
-        "@build_bazel_rules_typescript_protobufs_compiletime_deps//:node_modules/long/dist/long.js",
+        "@build_bazel_rules_typescript_protobufs_compiletime_deps//node_modules/protobufjs:dist/minimal/protobuf.min.js",
+        "@build_bazel_rules_typescript_protobufs_compiletime_deps//node_modules/long:dist/long.js",
     ],
     outs = [
         "protobuf.min.js",
@@ -99,4 +105,10 @@ ts_library(
     name = "e2e",
     testonly = 1,
     srcs = ["app_e2e_test.ts"],
+    tsconfig = "//examples:tsconfig-test",
+    deps = [
+        "@npm//@types/jasmine",
+        "@npm//@types/node",
+        "@npm//protractor",
+    ],
 )

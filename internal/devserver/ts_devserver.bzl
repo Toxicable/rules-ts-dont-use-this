@@ -27,9 +27,9 @@ def _ts_devserver(ctx):
     files = depset()
     for d in ctx.attr.deps:
         if hasattr(d, "node_sources"):
-            files += d.node_sources
+            files = depset(transitive = [files, d.node_sources])
         elif hasattr(d, "files"):
-            files += d.files
+            files = depset(transitive = [files, d.files])
 
     if ctx.label.workspace_root:
         # We need the workspace_name for the target being visited.
@@ -46,7 +46,7 @@ def _ts_devserver(ctx):
     # see if we can get performance gains out of the module loader.
     ctx.actions.write(ctx.outputs.manifest, "".join([
         workspace_name + "/" + f.short_path + "\n"
-        for f in files
+        for f in files.to_list()
     ]))
 
     amd_names_shim = ctx.actions.declare_file(
@@ -112,7 +112,7 @@ RUNFILES="$PWD/.."
             files = devserver_runfiles,
             # We don't expect executable targets to depend on the devserver, but if they do,
             # they can see the JavaScript code.
-            transitive_files = depset(ctx.files.data) + files,
+            transitive_files = depset(ctx.files.data, transitive = [files]),
             collect_data = True,
             collect_default = True,
         ),
@@ -162,7 +162,7 @@ ts_devserver = rule(
             doc = """The port that the devserver will listen on.""",
             default = 5432,
         ),
-        "_requirejs_script": attr.label(allow_single_file = True, default = Label("@build_bazel_rules_typescript_devserver_deps//:node_modules/requirejs/require.js")),
+        "_requirejs_script": attr.label(allow_single_file = True, default = Label("@build_bazel_rules_typescript_devserver_deps//node_modules/requirejs:require.js")),
         "_devserver": attr.label(
             default = Label("//devserver"),
             executable = True,
