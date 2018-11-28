@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "types": [
+      "node",
+      "jasmine"
+    ],
+    "lib": [
+      "dom",
+      "es5",
+      "es2015.core",
+      "es2015.collection",
+      "es2015.iterable",
+      "es2015.promise"
+    ]
+  }
+}
