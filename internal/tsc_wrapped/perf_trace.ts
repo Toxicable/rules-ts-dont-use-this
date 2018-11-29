@@ -45,7 +45,7 @@ declare interface Event {
   args?: any;
 }
 
-const events: Event[] = [];
+let events: Event[] = [];
 
 /** wrap wraps enter()/leave() calls around a block of code. */
 export function wrap<T>(name: string, f: () => T): T {

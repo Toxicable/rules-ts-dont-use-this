@@ -32,7 +32,7 @@ def create_tsconfig(
         extra_root_dirs = [],
         module_path_prefixes = None,
         module_roots = None,
-        node_modules_root = None):
+        skip_goog_scheme_deps_checking = False):
     """Creates an object representing the TypeScript configuration to run the compiler under Bazel.
 
     Args:
@@ -49,7 +49,7 @@ def create_tsconfig(
       extra_root_dirs: Extra root dirs to be passed to tsc_wrapped.
       module_path_prefixes: additional locations to resolve modules
       module_roots: standard locations to resolve modules
-      node_modules_root: the node_modules root path
+      skip_goog_scheme_deps_checking: whether imports from 'goog:*' should be strict deps checked
 
     Returns:
       A nested dict that corresponds to a tsconfig.json structure
@@ -85,7 +85,9 @@ def create_tsconfig(
         node_modules_mappings = []
         if (hasattr(ctx.attr, "node_modules")):
             node_modules_mappings.append("/".join([p for p in [
-                node_modules_root,
+                ctx.attr.node_modules.label.workspace_root,
+                ctx.attr.node_modules.label.package,
+                "node_modules",
                 "*",
             ] if p]))
 
@@ -95,7 +97,9 @@ def create_tsconfig(
             # We can add it to the path mapping to make this lookup work.
             # See https://github.com/bazelbuild/rules_typescript/issues/179
             node_modules_mappings.append("/".join([p for p in [
-                node_modules_root,
+                ctx.attr.node_modules.label.workspace_root,
+                ctx.attr.node_modules.label.package,
+                "node_modules",
                 "@types",
                 "*",
             ] if p]))
@@ -138,6 +142,7 @@ def create_tsconfig(
         "workspaceName": ctx.workspace_name,
         "target": str(ctx.label),
         "package": ctx.label.package,
+        "tsickle": tsickle_externs != None,
         "tsickleGenerateExterns": getattr(ctx.attr, "generate_externs", True),
         "tsickleExternsPath": tsickle_externs.path if tsickle_externs else "",
         "untyped": not getattr(ctx.attr, "tsickle_typed", False),
@@ -152,13 +157,14 @@ def create_tsconfig(
         "addDtsClutzAliases": getattr(ctx.attr, "add_dts_clutz_aliases", False),
         "typeCheckDependencies": getattr(ctx.attr, "internal_testing_type_check_dependencies", False),
         "expectedDiagnostics": getattr(ctx.attr, "expected_diagnostics", []),
+        "skipGoogSchemeDepsChecking": skip_goog_scheme_deps_checking,
     }
 
     if disable_strict_deps:
         bazel_options["disableStrictDeps"] = disable_strict_deps
         bazel_options["allowedStrictDeps"] = []
     else:
-        bazel_options["allowedStrictDeps"] = [f.path for f in allowed_deps.to_list()]
+        bazel_options["allowedStrictDeps"] = [f.path for f in allowed_deps]
 
     if hasattr(ctx.attr, "module_name") and ctx.attr.module_name:
         bazel_options["moduleName"] = ctx.attr.module_name
@@ -258,7 +264,9 @@ def create_tsconfig(
     if hasattr(ctx.attr, "node_modules"):
         compiler_options["typeRoots"] = ["/".join([p for p in [
             workspace_path,
-            node_modules_root,
+            ctx.attr.node_modules.label.workspace_root,
+            ctx.attr.node_modules.label.package,
+            "node_modules",
             "@types",
         ] if p])]
 

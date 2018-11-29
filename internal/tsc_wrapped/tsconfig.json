@@ -3,6 +3,7 @@
     "strict": true,
     "types": [
       "node",
+      "jasmine"
     ],
     "lib": [
       "dom",

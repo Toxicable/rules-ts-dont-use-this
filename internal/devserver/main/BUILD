@@ -12,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package(default_visibility = ["//visibility:public"])
+licenses(["notice"])  # Apache 2.0
 
-load("//:defs.bzl", "ts_library")
+filegroup(
+    name = "source_tree",
+    srcs = glob(["**/*"]),
+    visibility = [
+        "//internal:__subpackages__",
+    ],
+)
 
-ts_library(
-    name = "absolute_imports",
-    srcs = glob(["*.ts"]),
-    expected_diagnostics = [
-        "TS2307: Cannot find module 'internal/e2e/absolute_imports/foo'"
+load("@io_bazel_rules_go//go:def.bzl", "go_binary")
+
+go_binary(
+    name = "main",
+    srcs = ["main.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/concatjs",
+        "//internal/devserver",
     ],
 )

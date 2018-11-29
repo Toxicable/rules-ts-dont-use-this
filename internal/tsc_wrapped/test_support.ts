@@ -16,10 +16,9 @@
  */
 
 /** @fileoverview Helper functions for tests. */
-
 import * as fs from 'fs';
 
-import {FileCache} from './cache';
+import {FileCache} from './file_cache';
 
 export function writeTempFile(name: string, contents: string): string {
   // TEST_TMPDIR is set by bazel.
@@ -31,11 +30,11 @@ export function writeTempFile(name: string, contents: string): string {
 
 let digestNumber = 0;
 
-export function invalidateFileCache(fc: FileCache, ...fileNames: string[]) {
-  const digests = new Map<string, string>();
+export function invalidateFileCache(fc: FileCache<{}>, ...fileNames: string[]) {
+  const digests: {[filePath: string]: string} = {};
   for (const fp of fileNames) {
     digestNumber++;
-    digests.set(fp, `${fp}${digestNumber}`);
+    digests[fp] = fp + digestNumber;
   }
   fc.updateCache(digests);
 }

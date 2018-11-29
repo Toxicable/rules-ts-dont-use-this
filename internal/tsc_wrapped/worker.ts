@@ -1,7 +1,6 @@
 import * as path from 'path';
 /* tslint:disable:no-require-imports */
 const protobufjs = require('protobufjs');
-// tslint:disable-next-line:variable-name: ByteBuffer is instantiatable.
 const ByteBuffer = require('bytebuffer');
 
 protobufjs.convertFieldsToCamelCase = true;
@@ -25,24 +24,13 @@ export function runAsWorker(args: string[]) {
 }
 
 const workerpb = (function loadWorkerPb() {
-  const protoPath = '../worker_protocol.proto';
+  // This doesn't work due to a Bazel bug, see comments in build_defs.bzl
+  // let protoPath =
+  // 'external/bazel_tools/src/main/protobuf/worker_protocol.proto';
+  const protoPath = 'build_bazel_rules_typescript/internal/worker_protocol.proto';
 
   // Use node module resolution so we can find the .proto file in any of the root dirs
-  let protofile;
-  try {
-    // Look for the .proto file relative in its @bazel/typescript npm package
-    // location
-    protofile = require.resolve(protoPath);
-  } catch (e) {
-  }
-  if (!protofile) {
-    // If not found above, look for the .proto file in its rules_typescript
-    // workspace location
-    // This extra lookup should never happen in google3. It's only needed for
-    // local development in the rules_typescript repo.
-    protofile = require.resolve(
-        '../../third_party/github.com/bazelbuild/bazel/src/main/protobuf/worker_protocol.proto');
-  }
+  const protofile = require.resolve(protoPath);
 
   // Under Bazel, we use the version of TypeScript installed in the user's
   // workspace This means we also use their version of protobuf.js. Handle both.

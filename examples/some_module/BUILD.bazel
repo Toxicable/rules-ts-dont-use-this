@@ -15,7 +15,7 @@
 package(default_visibility = ["//visibility:public"])
 
 load("@build_bazel_rules_nodejs//:defs.bzl", "nodejs_binary")
-load("//internal:defaults.bzl", "ts_library")
+load("//:defs.bzl", "ts_library")
 
 # We compile this library with the module name "sm" to make it possible to
 # use `import {} from 'sm';` both at type-check time (we include the mapping in
@@ -46,7 +46,7 @@ sh_test(
     name = "module_load_test",
     srcs = ["module_load_test.sh"],
     data = [
-        ":bin",
-        "@bazel_tools//tools/bash/runfiles",
+      ":bin",
+      "@bazel_tools//tools/bash/runfiles",
     ],
 )

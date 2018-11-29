@@ -9,8 +9,8 @@
 
 ## IMPORTANT
 # If you change the `docker_image` version, also change the `cache_key` suffix
-var_1: &docker_image angular/ngcontainer:0.7.0
-var_2: &cache_key rules_typescript-{{ checksum "yarn.lock" }}-0.7.0
+var_1: &docker_image angular/ngcontainer:0.3.3
+var_2: &cache_key rules_typescript-{{ checksum "yarn.lock" }}-0.3.3
 var_3: &setup-bazel-remote-cache
   run:
     name: Start up bazel remote cache proxy
@@ -54,9 +54,9 @@ jobs:
       - restore_cache:
           key: *cache_key
       - run: bazel info release
+      - run: bazel run @nodejs//:yarn
       - run: bazel build ...
       - run: bazel test ...
-      - run: bazel build @disable_tsetse_for_external_test//...
 
   # This job tests the same stuff, but without the .bazelrc file.
   # It disables worker mode, for example.
@@ -73,12 +73,9 @@ jobs:
       - restore_cache:
           key: *cache_key
       - run: bazel --bazelrc=/dev/null info release
-      # We cherry pick the memory utilization options from .circleci/bazel.rc here.
-      # Since the default CircleCI container has only 4G, limiting the memory
-      # is required to keep Bazel from exhausting the memory.
-      - run: bazel --bazelrc=/dev/null --host_jvm_args=-Xmx3g build ... --local_resources=2560,1.0,1.0
-      - run: bazel --bazelrc=/dev/null --host_jvm_args=-Xmx3g test ... --local_resources=2560,1.0,1.0
-      - run: bazel --bazelrc=/dev/null --host_jvm_args=-Xmx3g build @disable_tsetse_for_external_test//... --local_resources=2560,1.0,1.0
+      - run: bazel --bazelrc=/dev/null run @nodejs//:yarn
+      - run: bazel --bazelrc=/dev/null build ...
+      - run: bazel --bazelrc=/dev/null test ...
 
       - save_cache:
           key: *cache_key
@@ -97,11 +94,7 @@ jobs:
       - *hide_node_and_yarn_local_binaries
       - restore_cache:
           key: *cache_key
-      # Build the npm packages which are used in the e2e tests
-      - run: bazel build //internal:npm_package
-      - run: bazel build //internal/karma:npm_package
-      # Run yarn as e2e tests depend on self managed node_modules
-      - run: bazel run @nodejs//:bin/yarn
+      - run: bazel run @nodejs//:yarn
       # Don't occupy the bazel server, as this test wants to run Bazel itself
       - run: bazel run @nodejs//:yarn e2e --script_path=yarn_e2e.sh
       - run: xvfb-run -a ./yarn_e2e.sh
