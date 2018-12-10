@@ -32,7 +32,7 @@ def create_tsconfig(
         extra_root_dirs = [],
         module_path_prefixes = None,
         module_roots = None,
-        skip_goog_scheme_deps_checking = False):
+        node_modules_root = None):
     """Creates an object representing the TypeScript configuration to run the compiler under Bazel.
 
     Args:
@@ -49,7 +49,7 @@ def create_tsconfig(
       extra_root_dirs: Extra root dirs to be passed to tsc_wrapped.
       module_path_prefixes: additional locations to resolve modules
       module_roots: standard locations to resolve modules
-      skip_goog_scheme_deps_checking: whether imports from 'goog:*' should be strict deps checked
+      node_modules_root: the node_modules root path
 
     Returns:
       A nested dict that corresponds to a tsconfig.json structure
@@ -69,6 +69,10 @@ def create_tsconfig(
         if p
     ])
     workspace_path = "/".join([".."] * len(tsconfig_dir.split("/")))
+
+    # Sourcemaps should be relative to workspace_root. Reuse the tsconfig_dir, but take out the bin_dir.
+    sourcemap_root = "/".join([".."] * (len(tsconfig_dir.split("/")) - len(ctx.bin_dir.path.split("/"))))
+
     if module_path_prefixes == None:
         module_path_prefixes = [
             "",
@@ -85,9 +89,7 @@ def create_tsconfig(
         node_modules_mappings = []
         if (hasattr(ctx.attr, "node_modules")):
             node_modules_mappings.append("/".join([p for p in [
-                ctx.attr.node_modules.label.workspace_root,
-                ctx.attr.node_modules.label.package,
-                "node_modules",
+                node_modules_root,
                 "*",
             ] if p]))
 
@@ -97,9 +99,7 @@ def create_tsconfig(
             # We can add it to the path mapping to make this lookup work.
             # See https://github.com/bazelbuild/rules_typescript/issues/179
             node_modules_mappings.append("/".join([p for p in [
-                ctx.attr.node_modules.label.workspace_root,
-                ctx.attr.node_modules.label.package,
-                "node_modules",
+                node_modules_root,
                 "@types",
                 "*",
             ] if p]))
@@ -142,7 +142,6 @@ def create_tsconfig(
         "workspaceName": ctx.workspace_name,
         "target": str(ctx.label),
         "package": ctx.label.package,
-        "tsickle": tsickle_externs != None,
         "tsickleGenerateExterns": getattr(ctx.attr, "generate_externs", True),
         "tsickleExternsPath": tsickle_externs.path if tsickle_externs else "",
         "untyped": not getattr(ctx.attr, "tsickle_typed", False),
@@ -157,14 +156,13 @@ def create_tsconfig(
         "addDtsClutzAliases": getattr(ctx.attr, "add_dts_clutz_aliases", False),
         "typeCheckDependencies": getattr(ctx.attr, "internal_testing_type_check_dependencies", False),
         "expectedDiagnostics": getattr(ctx.attr, "expected_diagnostics", []),
-        "skipGoogSchemeDepsChecking": skip_goog_scheme_deps_checking,
     }
 
     if disable_strict_deps:
         bazel_options["disableStrictDeps"] = disable_strict_deps
         bazel_options["allowedStrictDeps"] = []
     else:
-        bazel_options["allowedStrictDeps"] = [f.path for f in allowed_deps]
+        bazel_options["allowedStrictDeps"] = [f.path for f in allowed_deps.to_list()]
 
     if hasattr(ctx.attr, "module_name") and ctx.attr.module_name:
         bazel_options["moduleName"] = ctx.attr.module_name
@@ -183,7 +181,7 @@ def create_tsconfig(
     # Keep these options in sync with those in playground/playground.ts.
     compiler_options = {
         # De-sugar to this language level
-        "target": "esnext",
+        "target": target_language_level,
 
         # The "typescript.es5_sources" provider is expected to work
         # in both nodejs and in browsers, so we use umd in devmode.
@@ -257,6 +255,7 @@ def create_tsconfig(
         # Embed source maps and sources in .js outputs
         "inlineSourceMap": True,
         "inlineSources": True,
+        "sourceRoot": sourcemap_root,
         # Implied by inlineSourceMap: True
         "sourceMap": False,
     }
@@ -264,9 +263,7 @@ def create_tsconfig(
     if hasattr(ctx.attr, "node_modules"):
         compiler_options["typeRoots"] = ["/".join([p for p in [
             workspace_path,
-            ctx.attr.node_modules.label.workspace_root,
-            ctx.attr.node_modules.label.package,
-            "node_modules",
+            node_modules_root,
             "@types",
         ] if p])]
 

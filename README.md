@@ -17,83 +17,146 @@ http://tsetse.info/api/
 
 First, install a current Bazel distribution.
 
+Add the `@bazel/typescript` npm package to your `package.json` `devDependencies`.
+Optionally add the `@bazel/karma` npm package if you would like to use the
+`ts_web_test_suite` rule.
+
+```
+{
+  ...
+  "devDependencies": {
+    "@bazel/typescript": "0.20.3",
+    "@bazel/karma": "0.20.3",
+    ...
+  },
+  ...
+}
+```
+
 Create a `BUILD.bazel` file in your project root:
 
 ```python
 package(default_visibility = ["//visibility:public"])
 exports_files(["tsconfig.json"])
-
-# NOTE: this will move to node_modules/BUILD in a later release
-filegroup(name = "node_modules", srcs = glob([
-    "node_modules/**/*.js",
-    "node_modules/**/*.d.ts",
-    "node_modules/**/*.json",
-]))
 ```
 
 Next create a `WORKSPACE` file in your project root (or edit the existing one)
 containing:
 
 ```python
-# TypeScript rules depend on running Node.js.
 http_archive(
-    name = "build_bazel_rules_nodejs",
-    url = "https://github.com/bazelbuild/rules_nodejs/archive/0.8.0.zip",
-    strip_prefix = "rules_nodejs-0.8.0",
-    sha256 = "4e40dd49ae7668d245c3107645f2a138660fcfd975b9310b91eda13f0c973953",
-)
-
-# ts_web_test depends on the web testing rules to provision browsers.
-http_archive(
-    name = "io_bazel_rules_webtesting",
-    url = "https://github.com/bazelbuild/rules_webtesting/archive/v0.2.0.zip",
-    strip_prefix = "rules_webtesting-0.2.0",
-    sha256 = "cecc12f07e95740750a40d38e8b14b76fefa1551bef9332cb432d564d693723c",
-)
-
-# ts_devserver depends on the Go rules.
-# See https://github.com/bazelbuild/rules_go#setup for the latest version.
-http_archive(
-    name = "io_bazel_rules_go",
-    url = "https://github.com/bazelbuild/rules_go/releases/download/0.8.1/rules_go-0.8.1.tar.gz",
-    sha256 = "90bb270d0a92ed5c83558b2797346917c46547f6f7103e648941ecdb6b9d0e72",
-)
-
-# Include @bazel/typescript in package.json#devDependencies
-local_repository(
     name = "build_bazel_rules_typescript",
-    path = "node_modules/@bazel/typescript",
+    url = "https://github.com/bazelbuild/rules_typescript/archive/0.20.3.zip",
+    strip_prefix = "rules_typescript-0.20.3",
 )
 
-load("@build_bazel_rules_nodejs//:defs.bzl", "node_repositories")
+# Fetch transitive Bazel dependencies of build_bazel_rules_typescript
+load("@build_bazel_rules_typescript//:package.bzl", "rules_typescript_dependencies")
+rules_typescript_dependencies()
 
-# Point to the package.json file so Bazel can run the package manager for you.
-node_repositories(package_json = ["//:package.json"])
+# Fetch transitive Bazel dependencies of build_bazel_rules_nodejs
+load("@build_bazel_rules_nodejs//:package.bzl", "rules_nodejs_dependencies")
+rules_nodejs_dependencies()
 
+# Setup TypeScript toolchain
+load("@build_bazel_rules_typescript//:defs.bzl", "ts_setup_workspace")
+ts_setup_workspace()
+
+# Setup the NodeJS toolchain
+load("@build_bazel_rules_nodejs//:defs.bzl", "node_repositories", "yarn_install")
+node_repositories()
+
+# Setup Bazel managed npm dependencies with the `yarn_install` rule.
+# The name of this rule should be set to `npm` so that `ts_library` and `ts_web_test_suite`
+# can find your npm dependencies by default in the `@npm` workspace. You may
+# also use the `npm_install` rule with a `package-lock.json` file if you prefer.
+# See https://github.com/bazelbuild/rules_nodejs#dependencies for more info.
+yarn_install(
+  name = "npm",
+  package_json = "//:package.json",
+  yarn_lock = "//:yarn.lock",
+)
+
+# Setup Go toolchain
 load("@io_bazel_rules_go//go:def.bzl", "go_rules_dependencies", "go_register_toolchains")
-
 go_rules_dependencies()
 go_register_toolchains()
 
+# Setup web testing, choose browsers we can test on
 load("@io_bazel_rules_webtesting//web:repositories.bzl", "browser_repositories", "web_test_repositories")
 
 web_test_repositories()
 browser_repositories(
     chromium = True,
 )
-
-load("@build_bazel_rules_typescript//:defs.bzl", "ts_setup_workspace")
-
-ts_setup_workspace()
 ```
 
-We recommend using the Yarn package manager, because it has a built-in command
-to verify the integrity of your `node_modules` directory.
-You can run the version Bazel has already installed:
+# Self-managed npm dependencies
+
+We recommend you use Bazel managed dependencies but if you would like
+Bazel to also install a `node_modules` in your workspace you can also
+point the `node_repositories` repository rule in your WORKSPACE file to
+your `package.json`.
+
+```python
+node_repositories(package_json = ["//:package.json"])
+```
+
+You can then run `yarn` in your workspace with:
 
 ```sh
 $ bazel run @nodejs//:yarn
 ```
+
+To use your workspace `node_modules` folder as a dependency in `ts_library` and
+other rules, add the following to your root `BUILD.bazel` file:
+
+```python
+filegroup(
+    name = "node_modules",
+    srcs = glob(
+        include = [
+          "node_modules/**/*.js",
+          "node_modules/**/*.d.ts",
+          "node_modules/**/*.json",
+          "node_modules/.bin/*",
+        ],
+        exclude = [
+          # Files under test & docs may contain file names that
+          # are not legal Bazel labels (e.g.,
+          # node_modules/ecstatic/test/public/中文/檔案.html)
+          "node_modules/**/test/**",
+          "node_modules/**/docs/**",
+          # Files with spaces in the name are not legal Bazel labels
+          "node_modules/**/* */**",
+          "node_modules/**/* *",
+        ],
+    ),
+)
+
+# Create a tsc_wrapped compiler rule to use in the ts_library
+# compiler attribute when using self-managed dependencies
+nodejs_binary(
+    name = "@bazel/typescript/tsc_wrapped",
+    entry_point = "@bazel/typescript/tsc_wrapped/tsc_wrapped.js",
+    # The --expose-gc node option is required for tsc_wrapped
+    templated_args = ["--node_options=--expose-gc"],
+    # Point bazel to your node_modules to find the entry point
+    node_modules = ["//:node_modules"],
+)
+
+# Create a karma rule to use in ts_web_test_suite karma
+# attribute when using self-managed dependencies
+nodejs_binary(
+    name = "karma/karma",
+    entry_point = "karma/bin/karma",
+    # Point bazel to your node_modules to find the entry point
+    node_modules = ["//:node_modules"],
+)
+```
+
+See https://github.com/bazelbuild/rules_nodejs#dependencies for more information on
+managing npm dependencies with Bazel.
 
 ## Usage
 
@@ -112,20 +175,63 @@ ts_library(
     name = "my_code",
     srcs = glob(["*.ts"]),
     deps = ["//path/to/other:library"],
-    tsconfig = "//:tsconfig.json",
 )
 ```
 
-Then build it:
+If your ts_library target has npm dependencies you can specify these
+with fine grained npm dependency targets created by the `yarn_install` or
+`npm_install` rules:
+
+```python
+ts_library(
+    name = "my_code",
+    srcs = glob(["*.ts"]),
+    deps = [
+      "@npm//@types/node",
+      "@npm//@types/foo",
+      "@npm//foo",
+      "//path/to/other:library",
+    ],
+)
+```
+
+You can also you the `@npm//@types` target which will include all
+packages in the `@types` scope as dependencies.
+
+If you are using self-managed npm dependencies, you can use the
+`node_modules` attribute in `ts_library` and point it to the
+`//:node_modules` filegroup defined in your root `BUILD.bazel` file.
+You'll also need to override the `compiler` attribute if you do this
+as the Bazel-managed deps and self-managed cannot be used together
+in the same rule.
+
+```python
+ts_library(
+    name = "my_code",
+    srcs = glob(["*.ts"]),
+    deps = ["//path/to/other:library"],
+    node_modules = "//:node_modules",
+    compiler = "//:@bazel/typescript/tsc_wrapped",
+)
+```
+
+To build a `ts_library` target run:
 
 `bazel build //path/to/package:target`
 
 The resulting `.d.ts` file paths will be printed. Additionally, the `.js`
 outputs from TypeScript will be written to disk, next to the `.d.ts` files <sup>1</sup>.
 
+Note that the `tsconfig.json` file used for compilation should be the same one
+your editor references, to keep consistent settings for the TypeScript compiler.
+By default, `ts_library` uses the `tsconfig.json` file in the workspace root
+directory. See the notes about the `tsconfig` attribute in the [ts_library API docs].
+
 > <sup>1</sup> The
 > [declarationDir](https://www.typescriptlang.org/docs/handbook/compiler-options.html)
 > compiler option will be silently overwritten if present.
+
+[ts_library API docs]: http://tsetse.info/api/build_defs.html#ts_library
 
 ### Serving TypeScript for development
 
@@ -232,12 +338,12 @@ changes since the last tag - if so, this will be a minor, if not, it's a patch.
 (This may not sound like semver - but since our major version is a zero, the
 rule is that minors are breaking changes and patches are new features).
 
-```sh
-yarn skydoc
-git commit -a -m 'Update docs for release'
-npm config set tag-version-prefix ''
-npm version minor -m 'rel: %s' # Replace minor with patch if no breaking changes
-git push
-git push --tags
-npm publish
-```
+1. Re-generate the API docs: `yarn skydoc`
+1. May be necessary if Go code has changed though probably it was already necessary to run this to keep CI green: `bazel run :gazelle`
+1. If we depend on a newer rules_nodejs, update the `check_rules_nodejs_version` in `ts_repositories.bzl`
+1. `git commit -a -m 'Update docs for release'`
+1. `npm config set tag-version-prefix ''`
+1. `npm version minor -m 'rel: %s'` (replace `minor` with `patch` if no breaking changes)
+1. Build npm packages and publish them: `bazel run //internal:npm_package.publish && bazel run //internal/karma:npm_package.publish`
+1. `git push && git push --tags`
+1. (Temporary): submit a google3 CL to update the versions in package.bzl and package.json

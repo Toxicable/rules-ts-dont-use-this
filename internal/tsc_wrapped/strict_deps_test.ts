@@ -21,6 +21,10 @@ import * as ts from 'typescript';
 import {checkModuleDeps} from './strict_deps';
 
 describe('strict deps', () => {
+  // Cache ASTs that are not part of the test to avoid parsing lib.d.ts over and
+  // over again.
+  const astCache = new Map<string, ts.SourceFile>();
+
   function createProgram(files: ts.MapLike<string>) {
     const options: ts.CompilerOptions = {
       noResolve: true,
@@ -28,13 +32,15 @@ describe('strict deps', () => {
       rootDirs: ['/src', '/src/blaze-bin'],
       paths: {'*': ['*', 'blaze-bin/*']},
     };
-
     // Fake compiler host relying on `files` above.
     const host = ts.createCompilerHost(options);
     const originalGetSourceFile = host.getSourceFile.bind(host);
-    host.getSourceFile = function(fileName: string) {
+    host.getSourceFile = (fileName: string) => {
       if (!files[fileName]) {
-        return originalGetSourceFile(fileName, ts.ScriptTarget.Latest);
+        if (astCache.has(fileName)) return astCache.get(fileName);
+        const file = originalGetSourceFile(fileName, ts.ScriptTarget.Latest);
+        astCache.set(fileName, file);
+        return file;
       }
       return ts.createSourceFile(
           fileName, files[fileName], ts.ScriptTarget.Latest);
@@ -67,7 +73,7 @@ describe('strict deps', () => {
       '/src/p/sd1.ts': 'import {a} from "somepkg";',
     });
     const diags = checkModuleDeps(
-        p.getSourceFile('p/sd1.ts')!, p.getTypeChecker(), [], '/src', false,
+        p.getSourceFile('p/sd1.ts')!, p.getTypeChecker(), [], '/src',
         ['/src/node_modules']);
     expect(diags.length).toBe(0, diags);
   });
@@ -83,7 +89,7 @@ describe('strict deps', () => {
     });
     const diags = checkModuleDeps(
         p.getSourceFile('p/sd3.ts')!, p.getTypeChecker(), ['/src/p/sd2.ts'],
-        '/src', false);
+        '/src');
     expect(diags.length).toBe(1);
     expect(diags[0].messageText)
         .toMatch(/transitive dependency on p\/sd1.ts not allowed/);
@@ -98,7 +104,7 @@ describe('strict deps', () => {
     });
     const diags = checkModuleDeps(
         p.getSourceFile('p/sd3.ts')!, p.getTypeChecker(), ['/src/p/sd2.ts'],
-        '/src', false);
+        '/src');
     expect(diags.length).toBe(1);
     expect(diags[0].messageText)
         .toMatch(/transitive dependency on p\/sd1.ts not allowed/);
@@ -115,7 +121,7 @@ describe('strict deps', () => {
     });
     const diags = checkModuleDeps(
         p.getSourceFile('/src/p/sd3.ts')!, p.getTypeChecker(),
-        ['/src/blaze-bin/p/sd2.ts'], '/src', false);
+        ['/src/blaze-bin/p/sd2.ts'], '/src');
     expect(diags.length).toBe(1);
     expect(diags[0].messageText)
         .toMatch(/dependency on blaze-bin\/p\/sd1.ts not allowed/);
@@ -132,21 +138,9 @@ describe('strict deps', () => {
     });
     const diags = checkModuleDeps(
         p.getSourceFile('/src/p/sd3.ts')!, p.getTypeChecker(),
-        ['/src/blaze-bin/p/sd2.d.ts'], '/src', false);
+        ['/src/blaze-bin/p/sd2.d.ts'], '/src');
     expect(diags.length).toBe(1);
     expect(diags[0].messageText)
         .toMatch(/dependency on blaze-bin\/p\/sd1.d.ts not allowed/);
-  });
-
-  it('skips failures on goog: schema deep imports when flag is set', () => {
-    const p = createProgram({
-      '/src/blaze-bin/p/clutz.d.ts':
-          `declare module 'goog:x' { export let x:string; }`,
-      '/src/p/prog.ts': `import {x} from 'goog:x';`
-    });
-    const diags = checkModuleDeps(
-        p.getSourceFile('/src/p/prog.ts')!, p.getTypeChecker(), [], '/src',
-        true);
-    expect(diags.length).toBe(0);
   });
 });

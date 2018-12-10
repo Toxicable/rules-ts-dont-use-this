@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as tsickle from 'tsickle';
 import * as ts from 'typescript';
 
-import {FileLoader} from './file_cache';
+import {FileLoader} from './cache';
 import * as perfTrace from './perf_trace';
 import {BazelOptions} from './tsconfig';
 import {DEBUG, debug} from './worker';
@@ -21,15 +21,19 @@ export interface BazelTsOptions extends ts.CompilerOptions {
   rootDirs: string[];
   rootDir: string;
   outDir: string;
+  typeRoots: string[];
 }
 
 export function narrowTsOptions(options: ts.CompilerOptions): BazelTsOptions {
-  if (!options.rootDirs)
+  if (!options.rootDirs) {
     throw new Error(`compilerOptions.rootDirs should be set by tsconfig.bzl`);
-  if (!options.rootDir)
+  }
+  if (!options.rootDir) {
     throw new Error(`compilerOptions.rootDirs should be set by tsconfig.bzl`);
-  if (!options.outDir)
+  }
+  if (!options.outDir) {
     throw new Error(`compilerOptions.rootDirs should be set by tsconfig.bzl`);
+  }
   return options as BazelTsOptions;
 }
 
@@ -48,7 +52,7 @@ function validateBazelOptions(bazelOpts: BazelOptions) {
   }
 }
 
-const TS_EXT = /(\.d)?\.tsx?$/;
+const SOURCE_EXT = /((\.d)?\.tsx?|\.js)$/;
 
 /**
  * CompilerHost that knows how to cache parsed files to improve compile times.
@@ -76,14 +80,18 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
   transformTypesToClosure: boolean;
   addDtsClutzAliases: boolean;
   isJsTranspilation: boolean;
+  provideExternalModuleDtsNamespace: boolean;
   options: BazelTsOptions;
+  moduleResolutionHost: ts.ModuleResolutionHost = this;
+  // TODO(evanm): delete this once tsickle is updated.
   host: ts.ModuleResolutionHost = this;
+  private allowActionInputReads = true;
+
 
   constructor(
       public inputFiles: string[], options: ts.CompilerOptions,
       readonly bazelOpts: BazelOptions, private delegate: ts.CompilerHost,
       private fileLoader: FileLoader,
-      private readonly allowActionInputReads: boolean,
       private moduleResolver: ModuleResolver = ts.resolveModuleName) {
     this.options = narrowTsOptions(options);
     this.relativeRoots =
@@ -104,8 +112,7 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     // include global typings from node_modules/@types
     // see getAutomaticTypeDirectiveNames in
     // TypeScript:src/compiler/moduleNameResolver
-    // Do this for Bazel only - under Blaze we don't support such discovery.
-    if (allowActionInputReads && delegate && delegate.directoryExists) {
+    if (this.allowActionInputReads && delegate && delegate.directoryExists) {
       this.directoryExists = delegate.directoryExists.bind(delegate);
     }
 
@@ -119,6 +126,7 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     this.transformTypesToClosure = bazelOpts.tsickle;
     this.addDtsClutzAliases = bazelOpts.addDtsClutzAliases;
     this.isJsTranspilation = Boolean(bazelOpts.isJsTranspilation);
+    this.provideExternalModuleDtsNamespace = !bazelOpts.hasImplementation;
   }
 
   /**
@@ -250,10 +258,10 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     }
     if (resolvedPath) {
       // Strip file extensions.
-      importPath = resolvedPath.replace(TS_EXT, '');
+      importPath = resolvedPath.replace(SOURCE_EXT, '');
       // Make sure all module names include the workspace name.
       if (importPath.indexOf(this.bazelOpts.workspaceName) !== 0) {
-        importPath = path.join(this.bazelOpts.workspaceName, importPath);
+        importPath = path.posix.join(this.bazelOpts.workspaceName, importPath);
       }
     }
 
@@ -294,7 +302,7 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     if (!this.shouldNameModule(sf.fileName)) return undefined;
     // /build/work/bazel-out/local-fastbuild/bin/path/to/file.ts
     // -> path/to/file
-    let fileName = this.rootDirsRelative(sf.fileName).replace(TS_EXT, '');
+    let fileName = this.rootDirsRelative(sf.fileName).replace(SOURCE_EXT, '');
 
     let workspace = this.bazelOpts.workspaceName;
 
@@ -317,7 +325,7 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
       const relativeFileName = path.posix.relative(this.bazelOpts.package, fileName);
       if (!relativeFileName.startsWith('..')) {
         if (this.bazelOpts.moduleRoot &&
-            this.bazelOpts.moduleRoot.replace(TS_EXT, '') ===
+            this.bazelOpts.moduleRoot.replace(SOURCE_EXT, '') ===
                 relativeFileName) {
           return this.bazelOpts.moduleName;
         }
@@ -335,6 +343,72 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     // path/to/file ->
     // myWorkspace/path/to/file
     return path.posix.join(workspace, fileName);
+  }
+
+  /**
+   * Resolves the typings file from a package at the specified path. Helper
+   * function to `resolveTypeReferenceDirectives`.
+   */
+  private resolveTypingFromDirectory(typePath: string, primary: boolean): ts.ResolvedTypeReferenceDirective | undefined {
+    // Looks for the `typings` attribute in a package.json file
+    // if it exists
+    const pkgFile = path.posix.join(typePath, 'package.json');
+    if (this.fileExists(pkgFile)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgFile, 'UTF-8'));
+      let typings = pkg['typings'];
+      if (typings) {
+        if (typings === '.' || typings === './') {
+          typings = 'index.d.ts';
+        }
+        const maybe = path.posix.join(typePath, typings);
+        if (this.fileExists(maybe)) {
+          return { primary, resolvedFileName: maybe };
+        }
+      }
+    }
+
+    // Look for an index.d.ts file in the path
+    const maybe = path.posix.join(typePath, 'index.d.ts');
+    if (this.fileExists(maybe)) {
+      return { primary, resolvedFileName: maybe };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Override the default typescript resolveTypeReferenceDirectives function.
+   * Resolves /// <reference types="x" /> directives under bazel. The default
+   * typescript secondary search behavior needs to be overridden to support
+   * looking under `bazelOpts.nodeModulesPrefix`
+   */
+  resolveTypeReferenceDirectives(names: string[], containingFile: string): (ts.ResolvedTypeReferenceDirective | undefined)[] {
+    let result: (ts.ResolvedTypeReferenceDirective | undefined)[] = []
+    names.forEach(name => {
+      let resolved: ts.ResolvedTypeReferenceDirective | undefined;
+
+      // primary search
+      this.options.typeRoots.forEach(typeRoot => {
+        if (!resolved) {
+          resolved = this.resolveTypingFromDirectory(path.posix.join(typeRoot, name), true);
+        }
+      });
+
+      // secondary search
+      if (!resolved) {
+        resolved = this.resolveTypingFromDirectory(path.posix.join(this.bazelOpts.nodeModulesPrefix, name), false);
+      }
+
+      // Types not resolved should be silently ignored. Leave it to Typescript
+      // to either error out with "TS2688: Cannot find type definition file for
+      // 'foo'" or for the build to fail due to a missing type that is used.
+      if (DEBUG && !resolved) {
+        debug(`Failed to resolve type reference directive '${name}'`);
+      }
+
+      result.push(resolved);
+    });
+    return result;
   }
 
   /** Loads a source file from disk (or the cache). */
@@ -449,10 +523,10 @@ export class CompilerHost implements ts.CompilerHost, tsickle.TsickleHost {
     return this.knownFiles.has(filePath);
   }
 
-  // Since we override getDefaultLibFileName below, we must also provide the
-  // directory containing the file.
-  // Otherwise TypeScript looks in C:\lib.xxx.d.ts for the default lib.
   getDefaultLibLocation(): string {
+    // Since we override getDefaultLibFileName below, we must also provide the
+    // directory containing the file.
+    // Otherwise TypeScript looks in C:\lib.xxx.d.ts for the default lib.
     return path.dirname(
         this.getDefaultLibFileName({target: ts.ScriptTarget.ES5}));
   }

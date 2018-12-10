@@ -18,48 +18,22 @@
 # Exclude node_modules, see
 # https://github.com/bazelbuild/rules_go/blob/master/go/tools/gazelle/README.rst#directives
 # gazelle:exclude node_modules
-load("@io_bazel_rules_go//go:def.bzl", "gazelle")
+load("@bazel_gazelle//:def.bzl", "gazelle")
 load("@build_bazel_rules_nodejs//internal/js_library:js_library.bzl", "js_library")
+
+# ts_library defaults to this label in the top-level package.
+# Point to where the file actually lives.
+alias(
+    name = "tsconfig.json",
+    actual = "//examples:tsconfig.json",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
 
 gazelle(
     name = "gazelle",
     prefix = "github.com/bazelbuild/rules_typescript",
-)
-
-# The node_modules directory is created by `yarn install`
-# WORKAROUND for https://github.com/bazelbuild/bazel/issues/374#issuecomment-296217940
-filegroup(
-    name = "node_modules",
-    # Only include files needed for type-checking and runtime
-    srcs = glob([
-        "node_modules/**/*.js",
-        "node_modules/**/*.d.ts",
-        "node_modules/**/*.json"
-    ] + [
-        # Needed because http-server has a bin with no .js extension
-        "node_modules/http-server/**",
-    ]),
-    visibility = ["//visibility:public"],
-)
-
-load("@io_bazel_skydoc//skylark:skylark.bzl", "skylark_doc")
-
-skylark_doc(
-    name = "docs",
-    srcs = [
-        "//internal:ts_repositories.bzl",
-        "//internal:build_defs.bzl",
-        "//internal:ts_config.bzl",
-        "//internal/devserver:ts_devserver.bzl",
-        "//internal/karma:ts_web_test.bzl",
-        "//internal/protobufjs:ts_proto_library.bzl",
-    ],
-    format = "html",
-    # The site is served at http://tsetse.info so the URL doesn't include a
-    # /rules_typescript segment.
-    # TODO(alexeagle): separate Tsetse docs from the rest of rules_typescript
-    site_root = "/api",
-    strip_prefix = "internal/",
 )
 
 # Runtime libraries needed by the protobufjs library.
@@ -67,8 +41,8 @@ skylark_doc(
 js_library(
     name = "protobufjs_bootstrap_scripts",
     srcs = [
-        "@build_bazel_rules_typescript_protobufs_compiletime_deps//:node_modules/long/dist/long.js",
-        "@build_bazel_rules_typescript_protobufs_compiletime_deps//:node_modules/protobufjs/dist/minimal/protobuf.min.js",
+        "@build_bazel_rules_typescript_protobufs_compiletime_deps//node_modules/long:dist/long.js",
+        "@build_bazel_rules_typescript_protobufs_compiletime_deps//node_modules/protobufjs:dist/minimal/protobuf.min.js",
     ],
     # Make devmode loading work when it does require("protobufjs/minimal")
     # so this is shimmed to define it to equal global.protobuf
@@ -76,5 +50,23 @@ js_library(
         "long": "Long",
         "protobufjs/minimal": "protobuf",
     },
+    visibility = ["//visibility:public"],
+)
+
+load("@build_bazel_rules_nodejs//:defs.bzl", "nodejs_binary")
+
+# A nodejs_binary for @bazel/typescript/tsc_wrapped to use by default in
+# ts_library that depends on @npm//@bazel/typescript instead of the
+# output of the //internal/tsc_wrapped ts_library rule. This
+# default is for downstream users that depend on the @bazel/typescript npm
+# package. The generated @npm//@bazel/typescript/bin:tsc_wrapped target
+# does not work because it does not have the node `--expose-gc` flag
+# set which is required to support the call to `global.gc()`.
+nodejs_binary(
+    name = "@bazel/typescript/tsc_wrapped",
+    data = ["@npm//@bazel/typescript"],
+    entry_point = "@bazel/typescript/tsc_wrapped/tsc_wrapped.js",
+    install_source_map_support = False,
+    templated_args = ["--node_options=--expose-gc"],
     visibility = ["//visibility:public"],
 )

@@ -150,6 +150,12 @@ export interface BazelOptions {
    * be written. Ignored if isJsTranspilation is false.
    */
   transpiledJsOutputFileName?: string;
+
+  /**
+   * Whether the user provided an implementation shim for .d.ts files in the
+   * compilation unit.
+   */
+  hasImplementation?: boolean;
 }
 
 export interface ParsedTsConfig {
@@ -205,10 +211,6 @@ function warnOnOverriddenOptions(userConfig: any) {
     if (options.traceResolution || (options as any).diagnostics) {
       overrideWarnings.push(
           'compilerOptions.traceResolution and compilerOptions.diagnostics are set by the DEBUG flag in tsconfig.bzl under rules_typescript');
-    }
-    if (options.rootDirs) {
-      overrideWarnings.push(
-          'compilerOptions.rootDirs is always set to the workspace, bazel-bin, and bazel-genfiles');
     }
     if (options.rootDir || options.baseUrl) {
       overrideWarnings.push(
@@ -288,6 +290,9 @@ export function parseTsconfig(
       bazelOpts.suppressTsconfigOverrideWarnings =
           bazelOpts.suppressTsconfigOverrideWarnings ||
           userConfig.bazelOptions.suppressTsconfigOverrideWarnings;
+      bazelOpts.tsickle = bazelOpts.tsickle || userConfig.bazelOptions.tsickle;
+      bazelOpts.googmodule =
+          bazelOpts.googmodule || userConfig.bazelOptions.googmodule;
     }
     if (!bazelOpts.suppressTsconfigOverrideWarnings) {
       warnOnOverriddenOptions(userConfig);
@@ -304,6 +309,10 @@ export function parseTsconfig(
   // When canonicalizing paths, we always want to strip
   // `workspace/bazel-bin/file` to just `file`, not to `bazel-bin/file`.
   if (options.rootDirs) options.rootDirs.sort((a, b) => b.length - a.length);
+
+  // If the user requested goog.module, we need to produce that output even if
+  // the generated tsconfig indicates otherwise.
+  if (bazelOpts.googmodule) options.module = ts.ModuleKind.CommonJS;
 
   // TypeScript's parseJsonConfigFileContent returns paths that are joined, eg.
   // /path/to/project/bazel-out/arch/bin/path/to/package/../../../../../../path
