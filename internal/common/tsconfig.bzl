@@ -181,7 +181,7 @@ def create_tsconfig(
     # Keep these options in sync with those in playground/playground.ts.
     compiler_options = {
         # De-sugar to this language level
-        "target": target_language_level,
+        "target": "esnext",
 
         # The "typescript.es5_sources" provider is expected to work
         # in both nodejs and in browsers, so we use umd in devmode.
