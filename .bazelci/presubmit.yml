@@ -2,9 +2,11 @@
 platforms:
   ubuntu1404:
     run_targets:
+    - "//:gazelle"
     - "@nodejs//:yarn"
     build_targets:
     - "..."
+    - "@disable_tsetse_for_external_test//..."
     test_flags:
     # TODO(gregmagolan): shared libs needed by chrome & firefox not available on ubuntu1404
     - "--test_tag_filters=-browser:chromium-local,-browser:firefox-local"
@@ -12,9 +14,11 @@ platforms:
     - "..."
   ubuntu1604:
     run_targets:
+    - "//:gazelle"
     - "@nodejs//:yarn"
     build_targets:
     - "..."
+    - "@disable_tsetse_for_external_test//..."
     test_flags:
     # TODO(gregmagolan): shared libs needed by chrome & firefox not available on ubuntu1604
     - "--test_tag_filters=-browser:chromium-local,-browser:firefox-local"
@@ -22,9 +26,11 @@ platforms:
     - "..."
   macos:
     run_targets:
+    - "//:gazelle"
     - "@nodejs//:yarn"
     build_targets:
     - "..."
+    - "@disable_tsetse_for_external_test//..."
     test_flags:
     # TODO(gregmagolan): chrome & firefox unknown breakage on macos target here; does work locally on mac
     - "--test_tag_filters=-browser:chromium-local,-browser:firefox-local"
@@ -32,9 +38,10 @@ platforms:
     - "..."
   windows:
     run_targets:
+    - "//:gazelle"
     - "@nodejs//:yarn"
-    # TODO(alexeagle): expand to all targets when rules_go is fixed
     build_targets:
-    - "//examples:all"
-    # TODO(alexeagle): include test_targets when karma fixes land
-    # and we have Bazel 0.12
+    - "..."
+    - "@disable_tsetse_for_external_test//..."
+    test_targets:
+    - "..."
